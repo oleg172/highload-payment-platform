@@ -1,0 +1,37 @@
+version: '3.9'
+
+services:
+
+  postgres:
+    image: postgres:17
+    container_name: payment-postgres
+    environment:
+      POSTGRES_DB: payment
+      POSTGRES_USER: payment
+      POSTGRES_PASSWORD: payment
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U payment" ]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+  flyway:
+    image: flyway/flyway:latest
+    container_name: payment-flyway
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      # Монтируем вашу папку со скриптами из проекта
+      - ./src/main/resources/db/migration:/flyway/sql
+    environment:
+      FLYWAY_URL: jdbc:postgresql://postgres:5432/payment
+      FLYWAY_USER: payment
+      FLYWAY_PASSWORD: payment
+      FLYWAY_SCHEMAS: public
+      FLYWAY_BASELINE_ON_MIGRATE: true
+      # Если нужно явно указать location, можно добавить:
+      # FLYWAY_LOCATIONS: filesystem:/flyway/sql
+    command: migrate
+    restart: "no"

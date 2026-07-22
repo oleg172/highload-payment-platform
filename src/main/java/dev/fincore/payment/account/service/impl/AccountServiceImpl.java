@@ -5,8 +5,8 @@ import dev.fincore.payment.account.api.dto.response.AccountResponse;
 import dev.fincore.payment.account.domain.Account;
 import dev.fincore.payment.account.domain.repository.AccountRepository;
 import dev.fincore.payment.account.service.AccountService;
-import dev.fincore.payment.common.exception.OperationNotSupportedException;
-import jakarta.persistence.EntityNotFoundException;
+import dev.fincore.payment.common.exception.AccountAlreadyExistsException;
+import dev.fincore.payment.common.exception.EntityNotFoundException;
 import java.util.UUID;
 import lombok.AllArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -25,7 +25,7 @@ public class AccountServiceImpl implements AccountService {
 
         if (accountRepository.findByNumber(request.getNumber()).isPresent()) {
             log.error("Account [{}] is also present", request.getNumber());
-            throw new OperationNotSupportedException("Account also exist");
+            throw new AccountAlreadyExistsException("Account also exist");
         }
 
         Account account = new Account(request.getNumber());

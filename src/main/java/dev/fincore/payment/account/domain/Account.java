@@ -1,5 +1,6 @@
 package dev.fincore.payment.account.domain;
 
+import dev.fincore.payment.common.exception.OperationNotSupportedException;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.Id;
@@ -38,6 +39,13 @@ public class Account {
         this.createdAt = Instant.now();
     }
 
+    public Account(String number, BigDecimal balance) {
+        this.id = UUID.randomUUID();
+        this.number = number;
+        this.balance = balance;
+        this.createdAt = Instant.now();
+    }
+
     public UUID getId() {
         return id;
     }
@@ -52,5 +60,26 @@ public class Account {
 
     public Instant getCreatedAt() {
         return createdAt;
+    }
+
+    public void setBalance(BigDecimal balance) {
+        this.balance = balance;
+    }
+
+    public void withdraw(BigDecimal amount) {
+        if (amount.compareTo(BigDecimal.ZERO) <= 0) {
+            throw new IllegalArgumentException("Amount must be positive");
+        }
+        if (balance.compareTo(amount) < 0) {
+            throw new OperationNotSupportedException("Insufficient funds");
+        }
+        balance = balance.subtract(amount);
+    }
+
+    public void deposit(BigDecimal amount) {
+        if (amount.compareTo(BigDecimal.ZERO) <= 0) {
+            throw new IllegalArgumentException("Amount must be positive");
+        }
+        balance = balance.add(amount);
     }
 }

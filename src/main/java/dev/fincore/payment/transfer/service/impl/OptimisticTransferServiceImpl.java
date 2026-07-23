@@ -14,6 +14,7 @@ import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.locks.LockSupport;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.stereotype.Service;
@@ -27,6 +28,7 @@ public class OptimisticTransferServiceImpl implements TransferService {
     private final AccountRepository accountRepository;
 
     @Autowired
+    @Qualifier("optimisticTransferService")
     @Lazy
     private TransferService self;
 
@@ -42,7 +44,7 @@ public class OptimisticTransferServiceImpl implements TransferService {
         while (attempts < 5) {
             try {
                 return self.doTransfer(request);
-            } catch (ObjectOptimisticLockingFailureException e) {
+            } catch (Exception e) {
                 attempts++;
                 lastException = e;
                 LockSupport.parkNanos(

@@ -5,4 +5,6 @@ import dev.fincore.payment.transfer.api.dto.response.TransferResponse;
 
 public interface TransferService {
     TransferResponse transfer(TransferRequest request);
+
+    TransferResponse doTransfer(TransferRequest request);
 }

@@ -10,21 +10,55 @@ import dev.fincore.payment.transfer.api.dto.response.TransferStatus;
 import dev.fincore.payment.transfer.service.TransferService;
 import java.math.BigDecimal;
 import java.util.UUID;
-import lombok.AllArgsConstructor;
+import java.util.concurrent.ThreadLocalRandom;
+import java.util.concurrent.locks.LockSupport;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.annotation.Lazy;
+import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 @Slf4j
 @Service
-@AllArgsConstructor
 public class TransferServiceImpl implements TransferService {
 
     private final AccountRepository accountRepository;
 
+    @Autowired
+    @Lazy
+    private TransferService self;
+
+    public TransferServiceImpl(AccountRepository accountRepository) {
+        this.accountRepository = accountRepository;
+    }
+
     @Override
-    @Transactional
     public TransferResponse transfer(TransferRequest request) {
+        int attempts = 0;
+        Exception lastException = null;
+
+        while (attempts < 5) {
+            try {
+                return self.doTransfer(request);
+            } catch (ObjectOptimisticLockingFailureException e) {
+                attempts++;
+                lastException = e;
+                LockSupport.parkNanos(
+                        ThreadLocalRandom.current()
+                                         .nextLong(100_000, 500_000)
+                );
+                //log.warn("Optimistic lock conflict, attempt {}/5 for transfer from {} to {}", attempts, request.getFromAccountId(), request.getToAccountId());
+            }
+        }
+
+        //log.error("Transfer failed after 5 attempts due to optimistic lock conflicts");
+        throw new RuntimeException("Transfer failed after retries", lastException);
+    }
+
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public TransferResponse doTransfer(TransferRequest request) {
         UUID fromId = request.getFromAccountId();
         UUID toId = request.getToAccountId();
         BigDecimal amount = request.getAmount();
@@ -50,9 +84,6 @@ public class TransferServiceImpl implements TransferService {
 
         fromAccount.withdraw(amount);
         toAccount.deposit(amount);
-
-        accountRepository.save(fromAccount);
-        accountRepository.save(toAccount);
 
         log.info("Transfer completed successfully: from [{}] to [{}], amount [{}]", fromId, toId, amount);
 

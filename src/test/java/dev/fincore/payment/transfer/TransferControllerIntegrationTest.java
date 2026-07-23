@@ -1,12 +1,15 @@
-package dev.fincore.payment.account;
+package dev.fincore.payment.transfer;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.fincore.payment.account.domain.Account;
 import dev.fincore.payment.account.domain.repository.AccountRepository;
 import dev.fincore.payment.common.exception.OperationNotSupportedException;
 import dev.fincore.payment.transfer.api.dto.request.TransferRequest;
+import dev.fincore.payment.transfer.api.dto.request.TransferType;
+import java.math.BigDecimal;
 import java.util.List;
+import java.util.UUID;
+import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -18,19 +21,17 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.dao.CannotAcquireLockException;
+import org.springframework.dao.PessimisticLockingFailureException;
 import org.springframework.http.MediaType;
 import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
-import org.springframework.transaction.annotation.Transactional;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
-
-import java.math.BigDecimal;
-import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -41,8 +42,9 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @AutoConfigureMockMvc
 @Testcontainers
-//@Transactional   // откат изменений после каждого теста
-public class TransferControllerIntegrationTest {
+public abstract class TransferControllerIntegrationTest {
+
+    public abstract TransferType getTransferType();
 
     @Container
     static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:17")
@@ -95,6 +97,7 @@ public class TransferControllerIntegrationTest {
         request.setFromAccountId(from.getId());
         request.setToAccountId(to.getId());
         request.setAmount(BigDecimal.valueOf(100));
+        request.setTransferType(getTransferType());
 
         mockMvc.perform(post("/api/v1/transfers")
                        .contentType(MediaType.APPLICATION_JSON)
@@ -121,6 +124,7 @@ public class TransferControllerIntegrationTest {
         request.setFromAccountId(from.getId());
         request.setToAccountId(to.getId());
         request.setAmount(BigDecimal.valueOf(400)); // больше чем 300
+        request.setTransferType(getTransferType());
 
         mockMvc.perform(post("/api/v1/transfers")
                        .contentType(MediaType.APPLICATION_JSON)
@@ -139,6 +143,7 @@ public class TransferControllerIntegrationTest {
         request.setFromAccountId(nonExistentId);
         request.setToAccountId(to.getId());
         request.setAmount(BigDecimal.valueOf(50));
+        request.setTransferType(getTransferType());
 
         mockMvc.perform(post("/api/v1/transfers")
                        .contentType(MediaType.APPLICATION_JSON)
@@ -155,6 +160,7 @@ public class TransferControllerIntegrationTest {
         request.setFromAccountId(account.getId());
         request.setToAccountId(account.getId()); // тот же ID
         request.setAmount(BigDecimal.valueOf(100));
+        request.setTransferType(getTransferType());
 
         mockMvc.perform(post("/api/v1/transfers")
                        .contentType(MediaType.APPLICATION_JSON)
@@ -175,6 +181,7 @@ public class TransferControllerIntegrationTest {
         request.setFromAccountId(from.getId());
         request.setToAccountId(to.getId());
         request.setAmount(BigDecimal.ZERO);
+        request.setTransferType(getTransferType());
 
         mockMvc.perform(post("/api/v1/transfers")
                        .contentType(MediaType.APPLICATION_JSON)
@@ -190,7 +197,7 @@ public class TransferControllerIntegrationTest {
                .andExpect(status().isBadRequest());
     }
 
-    @Test
+    /*@Test
     void concurrentTransfers() throws Exception {
         // Шаг 1: создаём два счета
         Account accountA = accountRepository.save(new Account("A", BigDecimal.valueOf(1_000_000)));
@@ -219,11 +226,12 @@ public class TransferControllerIntegrationTest {
                             request.setFromAccountId(accountA.getId());
                             request.setToAccountId(accountB.getId());
                             request.setAmount(amount);
+                            request.setTransferType(getTransferType());
 
                             MvcResult result = mockMvc.perform(post("/api/v1/transfers")
-                                    .contentType(MediaType.APPLICATION_JSON)
-                                    .content(objectMapper.writeValueAsString(request)))
-                                    .andReturn();
+                                                              .contentType(MediaType.APPLICATION_JSON)
+                                                              .content(objectMapper.writeValueAsString(request)))
+                                                      .andReturn();
                             int status = result.getResponse().getStatus();
 
                             if (status == 200) {
@@ -279,9 +287,114 @@ public class TransferControllerIntegrationTest {
         System.out.println("Итоговый баланс A: " + updatedA.getBalance());
         System.out.println("Итоговый баланс B: " + updatedB.getBalance());
         System.out.println("Сумма балансов: " + total);
+        System.out.println("Количество ошибок: " + failureCount.get());
 
         // Ожидаем, что были ошибки (это и есть цель теста)
         assertTrue(failureCount.get() > 0,
                 "Не было ни одной ошибки, что маловероятно при 100 потоках. Вариант 1 не ожидался.");
+    }*/
+
+    @Test
+    public void runDeadlockTest() throws InterruptedException {
+        // Шаг 1: Создаём счета
+        Account accountA = accountRepository.save(new Account("A_dl", BigDecimal.valueOf(500_000)));
+        Account accountB = accountRepository.save(new Account("B_dl", BigDecimal.valueOf(500_000)));
+
+        final int threads = 100;
+        final int transfersPerThread = 100;
+        final BigDecimal amount = BigDecimal.ONE;
+
+        ExecutorService executor = Executors.newFixedThreadPool(threads);
+        CountDownLatch startLatch = new CountDownLatch(1);
+        CountDownLatch doneLatch = new CountDownLatch(threads);
+
+        AtomicInteger successCount = new AtomicInteger(0);
+        AtomicInteger failureCount = new AtomicInteger(0);
+        AtomicInteger deadlockCount = new AtomicInteger(0);
+        ConcurrentLinkedQueue<Exception> otherExceptions = new ConcurrentLinkedQueue<>();
+
+        long startTime = System.currentTimeMillis();
+
+        // Шаг 2: Запускаем потоки с чередованием направлений
+        for (int i = 0; i < threads; i++) {
+            final boolean fromAtoB = (i % 2 == 0); // половина A->B, половина B->A
+            executor.submit(() -> {
+                try {
+                    startLatch.await();
+                    for (int j = 0; j < transfersPerThread; j++) {
+                        try {
+                            TransferRequest request = new TransferRequest();
+                            if (fromAtoB) {
+                                request.setFromAccountId(accountA.getId());
+                                request.setToAccountId(accountB.getId());
+                            } else {
+                                request.setFromAccountId(accountB.getId());
+                                request.setToAccountId(accountA.getId());
+                            }
+                            request.setAmount(amount);
+                            request.setTransferType(getTransferType());
+
+                            MvcResult result = mockMvc.perform(post("/api/v1/transfers")
+                                                              .contentType(MediaType.APPLICATION_JSON)
+                                                              .content(objectMapper.writeValueAsString(request)))
+                                                      .andReturn();
+                            int status = result.getResponse().getStatus();
+                            if (status == 200) {
+                                successCount.incrementAndGet();
+                            } else {
+                                System.out.println(status);
+                                System.out.println(result.getResponse().getContentAsString());
+                                failureCount.incrementAndGet();
+                            }
+                        } catch (ObjectOptimisticLockingFailureException e) {
+                            // Для оптимистической версии – ожидаемо
+                            failureCount.incrementAndGet();
+                        } catch (PessimisticLockingFailureException e) {
+                            // Deadlock или таймаут блокировки для пессимистической
+                            deadlockCount.incrementAndGet();
+                            failureCount.incrementAndGet();
+                        } catch (Exception e) {
+                            failureCount.incrementAndGet();
+                            otherExceptions.add(e);
+                        }
+                    }
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                } finally {
+                    doneLatch.countDown();
+                }
+            });
+        }
+
+        startLatch.countDown();
+        boolean finished = doneLatch.await(5, TimeUnit.MINUTES);
+        executor.shutdown();
+        long endTime = System.currentTimeMillis();
+
+        assertTrue(finished, "Тест не завершился за 5 минут");
+
+        // Проверяем инварианты
+        Account updatedA = accountRepository.findById(accountA.getId()).orElseThrow();
+        Account updatedB = accountRepository.findById(accountB.getId()).orElseThrow();
+
+        BigDecimal total = updatedA.getBalance().add(updatedB.getBalance());
+        assertEquals(BigDecimal.valueOf(1_000_000).setScale(2), total,
+                "Сумма денег изменилась! Инвариант нарушен.");
+
+        assertTrue(updatedA.getBalance().signum() >= 0, "Баланс A отрицательный");
+        assertTrue(updatedB.getBalance().signum() >= 0, "Баланс B отрицательный");
+
+        assertTrue(otherExceptions.isEmpty(),
+                "Обнаружены неожиданные исключения: " + otherExceptions);
+
+        // Вывод статистики
+        System.out.println("=== СТАТИСТИКА ===");
+        System.out.println("Успешных переводов: " + successCount.get());
+        System.out.println("Неудачных переводов: " + failureCount.get());
+        System.out.println("Из них deadlock/таймаут: " + deadlockCount.get());
+        System.out.println("Баланс A: " + updatedA.getBalance());
+        System.out.println("Баланс B: " + updatedB.getBalance());
+        System.out.println("Сумма: " + total);
+        System.out.println("Время выполнения: " + (endTime - startTime) / 1000.0 + " сек");
     }
 }

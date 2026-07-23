@@ -16,4 +16,6 @@ public class TransferRequest {
 
     @Positive
     private BigDecimal amount;
+
+    private TransferType transferType;
 }

@@ -7,6 +7,9 @@ spring:
     open-in-view: false
     hibernate:
       ddl-auto: validate
+    properties:
+      hibernate:
+        order_updates: true #помог избавиться от deadlock для optimistic lock
   flyway:
     enabled: true
 

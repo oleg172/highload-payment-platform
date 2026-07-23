@@ -21,8 +21,8 @@ import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 @Slf4j
-@Service
-public class TransferServiceImpl implements TransferService {
+@Service("optimisticTransferService")
+public class OptimisticTransferServiceImpl implements TransferService {
 
     private final AccountRepository accountRepository;
 
@@ -30,7 +30,7 @@ public class TransferServiceImpl implements TransferService {
     @Lazy
     private TransferService self;
 
-    public TransferServiceImpl(AccountRepository accountRepository) {
+    public OptimisticTransferServiceImpl(AccountRepository accountRepository) {
         this.accountRepository = accountRepository;
     }
 
